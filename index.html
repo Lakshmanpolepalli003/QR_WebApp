@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QR Studio — Generate. Scan. Connect.</title>
+  <meta name="description" content="QR Studio — create scannable QR codes for URLs, Wi-Fi, contacts and more, and scan QR codes with your camera. Free, fast, and fully in your browser.">
+  <meta name="theme-color" content="#F5F7FA" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F172A" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('qr-studio-theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563EB'/%3E%3Cg fill='%23fff'%3E%3Crect x='6' y='6' width='8' height='8' rx='2'/%3E%3Crect x='18' y='6' width='8' height='8' rx='2'/%3E%3Crect x='6' y='18' width='8' height='8' rx='2'/%3E%3Crect x='18.5' y='18.5' width='3.5' height='3.5' rx='1'/%3E%3Crect x='23' y='23.5' width='2.5' height='2.5' rx='.8'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Icon sprite -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M13 2v7h7"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="13.5" width="3" height="3" rx="0.6" fill="currentColor" stroke="none"/><rect x="18" y="13.5" width="2.5" height="2.5" rx="0.5" fill="currentColor" stroke="none"/><rect x="13.5" y="18" width="2.5" height="2.5" rx="0.5" fill="currentColor" stroke="none"/><rect x="18" y="18" width="2.5" height="2.5" rx="0.5" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+  </svg>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="overlay" id="overlay" hidden></div>
+
+  <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+    <div class="sidebar-head">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#2563EB"/><g fill="#fff"><rect x="6" y="6" width="8" height="8" rx="2"/><rect x="18" y="6" width="8" height="8" rx="2"/><rect x="6" y="18" width="8" height="8" rx="2"/><rect x="18.5" y="18.5" width="3.5" height="3.5" rx="1"/><rect x="23" y="23.5" width="2.5" height="2.5" rx=".8"/></g></svg>
+        </span>
+        <span class="brand-text">
+          <strong>QR Studio</strong>
+          <small>Generate. Scan. Connect.</small>
+        </span>
+      </div>
+      <button type="button" class="icon-btn drawer-close" id="drawerClose" aria-label="Close menu">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
+    </div>
+
+    <nav class="sidebar-nav" aria-label="QR types">
+      <p class="nav-label">Generation</p>
+      <ul class="nav-list">
+        <li><button type="button" class="nav-item" data-type="url"><svg class="icon"><use href="#i-link"/></svg><span>URL</span></button></li>
+        <li><button type="button" class="nav-item" data-type="text"><svg class="icon"><use href="#i-type"/></svg><span>Text</span></button></li>
+        <li><button type="button" class="nav-item" data-type="wifi"><svg class="icon"><use href="#i-wifi"/></svg><span>Wi-Fi</span></button></li>
+        <li><button type="button" class="nav-item" data-type="email"><svg class="icon"><use href="#i-mail"/></svg><span>Email</span></button></li>
+        <li><button type="button" class="nav-item" data-type="phone"><svg class="icon"><use href="#i-phone"/></svg><span>Phone</span></button></li>
+        <li><button type="button" class="nav-item" data-type="sms"><svg class="icon"><use href="#i-message"/></svg><span>SMS</span></button></li>
+        <li><button type="button" class="nav-item" data-type="location"><svg class="icon"><use href="#i-pin"/></svg><span>Location</span></button></li>
+        <li><button type="button" class="nav-item" data-type="vcard"><svg class="icon"><use href="#i-user"/></svg><span>vCard</span></button></li>
+        <li><button type="button" class="nav-item" data-type="image"><svg class="icon"><use href="#i-image"/></svg><span>Image URL</span></button></li>
+        <li><button type="button" class="nav-item" data-type="file"><svg class="icon"><use href="#i-file"/></svg><span>File URL</span></button></li>
+      </ul>
+      <p class="nav-label">Scanning</p>
+      <ul class="nav-list">
+        <li><button type="button" class="nav-item" data-view="scan"><svg class="icon"><use href="#i-scan"/></svg><span>Scan QR</span></button></li>
+      </ul>
+    </nav>
+
+    <div class="upgrade-card">
+      <span class="pro-badge">PRO</span>
+      <h3>Upgrade to Pro</h3>
+      <p>Unlock custom colors, logos, analytics and more.</p>
+      <button type="button" class="btn btn-primary btn-block" id="upgradeBtn">Upgrade</button>
+    </div>
+  </aside>
+
+  <div class="main-wrap">
+    <header class="topbar">
+      <div class="topbar-left">
+        <button type="button" class="icon-btn hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
+          <svg class="icon"><use href="#i-menu"/></svg>
+        </button>
+        <a class="brand brand-mobile" href="./" aria-label="QR Studio home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#2563EB"/><g fill="#fff"><rect x="6" y="6" width="8" height="8" rx="2"/><rect x="18" y="6" width="8" height="8" rx="2"/><rect x="6" y="18" width="8" height="8" rx="2"/><rect x="18.5" y="18.5" width="3.5" height="3.5" rx="1"/><rect x="23" y="23.5" width="2.5" height="2.5" rx=".8"/></g></svg>
+          </span>
+          <span class="brand-text"><strong>QR Studio</strong></span>
+        </a>
+        <nav class="top-tabs" aria-label="Modes">
+          <button type="button" class="top-tab" data-view="generate">Generate</button>
+          <button type="button" class="top-tab" data-view="scan">Scan</button>
+        </nav>
+      </div>
+      <div class="topbar-right">
+        <button type="button" class="icon-btn" id="themeToggle" aria-label="Switch theme">
+          <svg class="icon icon-sun"><use href="#i-sun"/></svg>
+          <svg class="icon icon-moon"><use href="#i-moon"/></svg>
+        </button>
+        <button type="button" class="avatar-btn" id="profileBtn" aria-label="Account">
+          <svg class="icon"><use href="#i-user"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main id="main">
+      <div class="card notice-card" id="libNotice" hidden role="alert">
+        <svg class="icon"><use href="#i-alert"/></svg>
+        <p id="libNoticeText">Couldn&rsquo;t load the QR engine. Check your internet connection and reload the page.</p>
+      </div>
+
+      <!-- ================= GENERATE VIEW ================= -->
+      <section id="view-generate" aria-labelledby="genHeading">
+        <header class="view-head">
+          <h1 id="genHeading">URL QR Code</h1>
+          <p id="genDesc" class="muted">Enter a URL and create your QR code.</p>
+        </header>
+
+        <div class="gen-layout">
+          <div class="gen-form-col">
+            <form id="genForm" class="card form-card" novalidate>
+              <div id="genFields" class="form-grid"></div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Generate</button>
+                <button type="button" class="btn btn-ghost" id="clearBtn">Clear</button>
+              </div>
+            </form>
+
+            <section class="card customize-card" aria-labelledby="customizeTitle">
+              <h2 id="customizeTitle">Customize</h2>
+
+              <div class="custom-group">
+                <p class="group-label" id="colorsLabel">Colors</p>
+                <div class="colors-row" role="group" aria-labelledby="colorsLabel">
+                  <div class="color-field">
+                    <label for="fgColor">Foreground color</label>
+                    <div class="color-row">
+                      <input type="color" id="fgColor" value="#2563EB" aria-label="Foreground color picker">
+                      <input type="text" id="fgHex" class="hex-input" value="#2563EB" maxlength="7" spellcheck="false" aria-label="Foreground color hex value">
+                    </div>
+                  </div>
+                  <div class="color-field">
+                    <label for="bgColor">Background color</label>
+                    <div class="color-row">
+                      <input type="color" id="bgColor" value="#FFFFFF" aria-label="Background color picker">
+                      <input type="text" id="bgHex" class="hex-input" value="#FFFFFF" maxlength="7" spellcheck="false" aria-label="Background color hex value">
+                    </div>
+                  </div>
+                </div>
+                <p class="warn" id="contrastWarn" hidden></p>
+              </div>
+
+              <div class="custom-group">
+                <p class="group-label" id="patternLabel">QR pattern</p>
+                <div class="seg" id="patternSeg" role="group" aria-labelledby="patternLabel">
+                  <button type="button" class="seg-btn" data-pattern="square" aria-pressed="true">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1" fill="currentColor"/></svg>
+                    Square
+                  </button>
+                  <button type="button" class="seg-btn" data-pattern="rounded" aria-pressed="false">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="4" fill="currentColor"/></svg>
+                    Rounded
+                  </button>
+                  <button type="button" class="seg-btn" data-pattern="dots" aria-pressed="false">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="4.5" r="2.4" fill="currentColor"/><circle cx="11.5" cy="4.5" r="2.4" fill="currentColor"/><circle cx="4.5" cy="11.5" r="2.4" fill="currentColor"/><circle cx="11.5" cy="11.5" r="2.4" fill="currentColor"/></svg>
+                    Dots
+                  </button>
+                </div>
+              </div>
+
+              <div class="custom-group">
+                <p class="group-label" id="cornerLabel">Corner style</p>
+                <div class="seg" id="cornerSeg" role="group" aria-labelledby="cornerLabel">
+                  <button type="button" class="seg-btn" data-corner="square" aria-pressed="true">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="6" y="6" width="4" height="4" rx="0.5" fill="currentColor"/></svg>
+                    Square
+                  </button>
+                  <button type="button" class="seg-btn" data-corner="rounded" aria-pressed="false">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="6.5" y="6.5" width="3" height="3" rx="1" fill="currentColor"/></svg>
+                    Rounded
+                  </button>
+                  <button type="button" class="seg-btn" data-corner="dot" aria-pressed="false">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="8" r="2.2" fill="currentColor"/></svg>
+                    Dot
+                  </button>
+                </div>
+              </div>
+
+              <div class="custom-group">
+                <div class="slider-head">
+                  <label for="sizeRange">Size</label>
+                  <output id="sizeOut" for="sizeRange">512 px</output>
+                </div>
+                <input type="range" id="sizeRange" min="0" max="4" step="1" value="2" aria-label="QR code size in pixels">
+                <div class="slider-ticks" aria-hidden="true">
+                  <span>256</span><span>384</span><span>512</span><span>768</span><span>1024</span>
+                </div>
+              </div>
+
+              <div class="custom-group">
+                <p class="group-label" id="logoLabel">Logo</p>
+                <div class="logo-row">
+                  <button type="button" class="btn btn-ghost btn-sm" id="logoBtn">
+                    <svg class="icon"><use href="#i-upload"/></svg>Upload Logo
+                  </button>
+                  <input type="file" id="logoInput" accept="image/png,image/jpeg,image/webp" hidden>
+                  <div class="logo-preview" id="logoPreviewWrap" hidden>
+                    <img id="logoPreviewImg" alt="Uploaded logo preview">
+                    <button type="button" class="btn btn-ghost btn-sm btn-danger-ghost" id="logoRemoveBtn">
+                      <svg class="icon"><use href="#i-trash"/></svg>Remove Logo
+                    </button>
+                  </div>
+                </div>
+                <p class="hint">PNG, JPG or WEBP &middot; up to 2&nbsp;MB &middot; placed in the center with high error correction.</p>
+                <p class="warn" id="logoWarn" hidden>
+                  <svg class="icon"><use href="#i-alert"/></svg>
+                  A logo covers part of the QR code. High error correction is applied, but always test that the code still scans.
+                </p>
+              </div>
+
+              <div class="custom-group">
+                <p class="group-label" id="frameLabel">Frame</p>
+                <div class="seg" id="frameSeg" role="group" aria-labelledby="frameLabel">
+                  <button type="button" class="seg-btn" data-frame="none" aria-pressed="true">None</button>
+                  <button type="button" class="seg-btn" data-frame="scanme" aria-pressed="false">Scan Me</button>
+                  <button type="button" class="seg-btn" data-frame="custom" aria-pressed="false">Custom</button>
+                </div>
+                <div class="frame-text-wrap" id="frameTextWrap" hidden>
+                  <label for="frameTextInput">Frame text</label>
+                  <input type="text" id="frameTextInput" maxlength="24" placeholder="MY PORTFOLIO" spellcheck="false">
+                  <p class="hint">Up to 24 characters. Shown below the code.</p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <aside class="preview-col">
+            <div class="card preview-card" id="previewCard">
+              <div class="card-head">
+                <h2>QR Preview</h2>
+                <button type="button" class="btn btn-ghost btn-sm" id="resetBtn">
+                  <svg class="icon"><use href="#i-refresh"/></svg>Reset
+                </button>
+              </div>
+              <div class="qr-stage" id="qrStage">
+                <div class="qr-placeholder" id="qrPlaceholder">
+                  <svg class="icon icon-qr"><use href="#i-qr"/></svg>
+                  <p class="qr-placeholder-title">Your QR code will appear here</p>
+                  <p class="qr-placeholder-sub muted">Fill in the form and press Generate</p>
+                </div>
+                <div class="qr-output" id="qrOutput" hidden></div>
+              </div>
+              <p class="qr-caption" id="qrCaption" hidden></p>
+              <div class="download-row">
+                <button type="button" class="btn btn-primary" id="downloadPngBtn" disabled>
+                  <svg class="icon"><use href="#i-download"/></svg>Download PNG
+                </button>
+                <button type="button" class="btn btn-ghost" id="downloadSvgBtn" disabled>
+                  <svg class="icon"><use href="#i-download"/></svg>Download SVG
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ================= SCAN VIEW ================= -->
+      <section id="view-scan" hidden aria-labelledby="scanHeading">
+        <header class="view-head">
+          <h1 id="scanHeading">Scan QR Code</h1>
+          <p class="muted">Upload an image or use your camera to scan.</p>
+        </header>
+
+        <div class="scan-grid">
+          <section class="card scan-card" aria-labelledby="uploadTitle">
+            <h2 id="uploadTitle">Upload QR Image</h2>
+            <p class="muted card-sub">Drag &amp; drop an image here, or browse your files.</p>
+
+            <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Upload a QR image. Click to browse or drop a file here.">
+              <svg class="icon icon-lg"><use href="#i-upload"/></svg>
+              <p class="dropzone-title">Click to browse or drop an image</p>
+              <p class="dropzone-sub muted">PNG, JPG, JPEG or WEBP</p>
+            </div>
+            <input type="file" id="scanFileInput" accept="image/png,image/jpeg,image/webp" hidden>
+
+            <div class="upload-preview" id="uploadPreviewWrap" hidden>
+              <img id="uploadPreviewImg" alt="Uploaded QR image preview">
+              <button type="button" class="btn btn-ghost btn-sm" id="changeImageBtn">
+                <svg class="icon"><use href="#i-image"/></svg>Choose a different image
+              </button>
+            </div>
+
+            <p class="inline-error" id="uploadError" hidden role="alert"></p>
+            <div class="scan-actions">
+              <button type="button" class="btn btn-primary" id="decodeBtn" disabled>Decode</button>
+            </div>
+          </section>
+
+          <section class="card scan-card" aria-labelledby="cameraTitle">
+            <h2 id="cameraTitle">Camera Scanner</h2>
+            <p class="muted card-sub">Point your camera at a QR code to scan it live.</p>
+
+            <div class="camera-box" id="cameraBox">
+              <video id="cameraVideo" autoplay muted playsinline></video>
+              <div class="camera-idle" id="cameraIdle">
+                <svg class="icon icon-lg"><use href="#i-camera"/></svg>
+                <p class="camera-idle-title">Camera is off</p>
+                <p class="camera-idle-hint">Press &ldquo;Start Camera&rdquo; and point it at a QR code</p>
+              </div>
+              <div class="scan-frame" id="scanFrame" hidden><span class="scan-line"></span></div>
+            </div>
+
+            <p class="inline-error" id="cameraError" hidden role="alert"></p>
+            <div class="scan-actions btn-row">
+              <button type="button" class="btn btn-primary" id="startCamBtn">Start Camera</button>
+              <button type="button" class="btn btn-ghost" id="stopCamBtn" disabled>Stop Camera</button>
+            </div>
+          </section>
+        </div>
+
+        <section class="card result-card" id="resultCard" hidden aria-live="polite">
+          <div class="card-head">
+            <h2>Result</h2>
+            <span class="type-badge" id="resultBadge" hidden></span>
+          </div>
+          <div id="resultBody"></div>
+        </section>
+
+        <section class="card history-card" aria-labelledby="historyTitle">
+          <div class="card-head">
+            <h2 id="historyTitle">Scan history</h2>
+            <button type="button" class="btn btn-ghost btn-sm btn-danger-ghost" id="clearHistoryBtn" hidden>Clear history</button>
+          </div>
+          <ul class="history-list" id="historyList"></ul>
+          <p class="muted history-empty" id="historyEmpty">No scans yet. Scanned QR codes will appear here.</p>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p><strong>QR Studio</strong> &middot; Generate. Scan. Connect.</p>
+      <p class="muted">All processing happens locally in your browser. No data ever leaves your device.</p>
+    </footer>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <noscript>
+    <div class="noscript-banner">QR Studio needs JavaScript to generate and scan QR codes. Please enable JavaScript and reload the page.</div>
+  </noscript>
+
+  <script src="app.js" defer></script>
+  <script>
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => { /* offline support unavailable */ });
+      });
+    }
+  </script>
+</body>
+</html>
