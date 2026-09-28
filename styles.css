@@ -836,9 +836,81 @@ input[type="range"]::-moz-range-thumb {
   .seg-btn svg { display: none; }
 }
 
+/* ---------- Scan mode switcher (QR / Barcode) ---------- */
+.scan-mode-seg { margin: 0 0 20px; max-width: 340px; }
+.scan-mode-seg .seg-btn { font-weight: 700; }
+
+/* Barcode camera frame: wide horizontal strip (barcodes are wider than tall) */
+.camera-box[data-mode="barcode"] .scan-frame::before {
+  inset: 24% 6%;
+  border-radius: 10px;
+}
+.camera-box[data-mode="barcode"] .scan-line {
+  left: 8%; right: 8%; top: 26%;
+}
+@keyframes scanTopWide {
+  0%, 100% { top: 26%; }
+  50% { top: 74%; }
+}
+.camera-box[data-mode="barcode"] .scan-line { animation-name: scanTopWide; }
+
+/* Scan status line under the camera (mode + detection status) */
+.scan-status {
+  display: flex; align-items: center; gap: 8px;
+  margin: 10px 20px 0;
+  font-size: 12.5px; font-weight: 600;
+  color: var(--muted);
+}
+.scan-status .icon { width: 14px; height: 14px; flex: none; }
+.scan-status .status-dot {
+  width: 8px; height: 8px; flex: none;
+  border-radius: 999px;
+  background: var(--muted);
+}
+.scan-status.scanning .status-dot { background: var(--primary); animation: statusPulse 1.2s ease-in-out infinite; }
+.scan-status.found .status-dot { background: #16a34a; animation: none; }
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; } 50% { opacity: 0.35; }
+}
+
+/* History filter + clear button row */
+.history-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.history-filter .seg-btn { min-height: 30px; padding: 0 14px; font-size: 12.5px; }
+.history-filter .seg-btn svg { display: none; }
+.history-type-tag {
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px;
+  background: var(--surface-2); color: var(--muted);
+  border: 1px solid var(--border);
+}
+.history-type-tag.barcode { color: var(--primary); border-color: var(--primary-soft); background: var(--primary-soft); }
+
 /* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   .scan-line { animation: none; }
+  .scan-status.scanning .status-dot { animation: none; }
+}
+
+/* ============================================================
+   Barcode generator (Generate view, Barcode mode)
+   ============================================================ */
+.gen-mode-seg { margin-bottom: 22px; }
+
+/* Wide, sharp preview: 1D barcodes have no modul size to blur */
+.bc-stage { min-height: 240px; padding: 26px 22px; }
+.bc-output svg {
+  width: 100%; height: auto; max-width: 420px;
+  display: block; margin: 0 auto;
+  image-rendering: pixelated;
+}
+.bc-output svg text { user-select: none; }
+.bc-export-row { margin-top: 10px; }
+.check-row { display: flex; align-items: center; gap: 10px; }
+.check-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; flex: none; }
+.check-row label { font-size: 14px; font-weight: 500; cursor: pointer; }
+@media (max-width: 420px) {
+  .bc-stage { padding: 16px 10px; }
+  .bc-output svg { max-width: 100%; }
 }

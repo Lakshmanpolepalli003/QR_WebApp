@@ -2,17 +2,25 @@
    Same-origin assets only: cross-origin requests are never touched. */
 'use strict';
 
-const CACHE = 'qr-studio-v1';
+const CACHE = 'qr-studio-v4';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './manifest.webmanifest',
+  './favicon.ico',
+  './icons/favicon-16.png',
+  './icons/favicon-32.png',
+  './icons/favicon-48.png',
   './vendor/qrcode.min.js',
   './vendor/jsQR.min.js',
+  './vendor/zxing.min.js',
+  './vendor/JsBarcode.all.min.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './icons/icon-256.png',
+  './icons/icon-128.png',
   './icons/maskable-512.png',
   './icons/apple-touch-icon.png'
 ];

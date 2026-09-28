@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QR Studio — Generate. Scan. Connect.</title>
   <meta name="description" content="QR Studio — create scannable QR codes for URLs, Wi-Fi, contacts and more, and scan QR codes with your camera. Free, fast, and fully in your browser.">
-  <meta name="theme-color" content="#F5F7FA" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0F172A" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#111111">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <script>
@@ -21,7 +20,11 @@
     })();
   </script>
   <!-- <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563EB'/%3E%3Cg fill='%23fff'%3E%3Crect x='6' y='6' width='8' height='8' rx='2'/%3E%3Crect x='18' y='6' width='8' height='8' rx='2'/%3E%3Crect x='6' y='18' width='8' height='8' rx='2'/%3E%3Crect x='18.5' y='18.5' width='3.5' height='3.5' rx='1'/%3E%3Crect x='23' y='23.5' width='2.5' height='2.5' rx='.8'/%3E%3C/g%3E%3C/svg%3E"> -->
-  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -52,6 +55,7 @@
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
     <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="13.5" width="3" height="3" rx="0.6" fill="currentColor" stroke="none"/><rect x="18" y="13.5" width="2.5" height="2.5" rx="0.5" fill="currentColor" stroke="none"/><rect x="13.5" y="18" width="2.5" height="2.5" rx="0.5" fill="currentColor" stroke="none"/><rect x="18" y="18" width="2.5" height="2.5" rx="0.5" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-barcode" viewBox="0 0 24 24"><path d="M4 6v12"/><path d="M7 6v12"/><path d="M10 6v12"/><path d="M13.5 6v12"/><path d="M16 6v12"/><path d="M20 6v12"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
   </svg>
 
@@ -143,6 +147,152 @@
           <p id="genDesc" class="muted">Enter a URL and create your QR code.</p>
         </header>
 
+        <div class="seg scan-mode-seg gen-mode-seg" id="genModeSeg" role="group" aria-label="Generator mode">
+          <button type="button" class="seg-btn" data-gen-mode="qr" aria-pressed="true">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1" fill="currentColor"/><rect x="9" y="2" width="5" height="5" rx="1" fill="currentColor"/><rect x="2" y="9" width="5" height="5" rx="1" fill="currentColor"/><rect x="9" y="9" width="2" height="2" fill="currentColor"/><rect x="12" y="12" width="2" height="2" fill="currentColor"/><rect x="9" y="12" width="2" height="2" fill="currentColor"/></svg>
+            QR Code
+          </button>
+          <button type="button" class="seg-btn" data-gen-mode="barcode" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><rect x="1.5" y="3.5" width="1.4" height="9"/><rect x="4" y="3.5" width="0.9" height="9"/><rect x="6" y="3.5" width="1.8" height="9"/><rect x="8.9" y="3.5" width="0.9" height="9"/><rect x="10.9" y="3.5" width="1.4" height="9"/><rect x="13.4" y="3.5" width="1.1" height="9"/></g></svg>
+            Barcode
+          </button>
+        </div>
+
+        <!-- Barcode generator (hidden unless Barcode mode is active) -->
+        <div id="genBarcode" hidden>
+          <div class="gen-layout">
+            <div class="gen-form-col">
+              <form id="bcGenForm" class="card form-card" novalidate>
+                <div class="form-grid">
+                  <div class="field span-2" data-field="bcFormat">
+                    <label for="bcFormat">Barcode Type</label>
+                    <span class="select-wrap"><select id="bcFormat">
+                      <option value="CODE128" selected>CODE128</option>
+                      <option value="CODE39">CODE39</option>
+                      <option value="EAN13">EAN-13</option>
+                      <option value="EAN8">EAN-8</option>
+                      <option value="UPC">UPC-A</option>
+                      <option value="UPCE">UPC-E</option>
+                      <option value="ITF14">ITF-14</option>
+                      <option value="ITF">ITF</option>
+                      <option value="codabar">Codabar</option>
+                    </select></span>
+                  </div>
+                  <div class="field span-2" data-field="bcValue">
+                    <label for="bcValue">Enter barcode value <span class="req" aria-hidden="true">*</span></label>
+                    <input id="bcValue" name="bcValue" type="text" autocomplete="off" spellcheck="false" placeholder="123456789012" aria-required="true">
+                    <p class="field-error" id="bcValue-err" hidden></p>
+                    <p class="hint" id="bcValueHint">Letters, digits and common ASCII symbols are supported.</p>
+                  </div>
+                </div>
+                <div class="form-actions">
+                  <button type="submit" class="btn btn-primary">Generate</button>
+                  <button type="button" class="btn btn-ghost" id="bcClearBtn">Clear</button>
+                </div>
+              </form>
+
+              <section class="card customize-card" aria-labelledby="bcCustomizeTitle">
+                <h2 id="bcCustomizeTitle">Customize</h2>
+
+                <div class="custom-group">
+                  <div class="slider-head">
+                    <label for="bcWidth">Width</label>
+                    <output id="bcWidthOut" for="bcWidth">2</output>
+                  </div>
+                  <input type="range" id="bcWidth" min="1" max="5" step="0.5" value="2" aria-label="Barcode bar width">
+                </div>
+
+                <div class="custom-group">
+                  <div class="slider-head">
+                    <label for="bcHeight">Height</label>
+                    <output id="bcHeightOut" for="bcHeight">80 px</output>
+                  </div>
+                  <input type="range" id="bcHeight" min="30" max="160" step="5" value="80" aria-label="Barcode height in pixels">
+                </div>
+
+                <div class="custom-group">
+                  <div class="slider-head">
+                    <label for="bcFontSize">Font size</label>
+                    <output id="bcFontSizeOut" for="bcFontSize">18 px</output>
+                  </div>
+                  <input type="range" id="bcFontSize" min="10" max="32" step="1" value="18" aria-label="Barcode value font size in pixels">
+                </div>
+
+                <div class="custom-group">
+                  <div class="slider-head">
+                    <label for="bcMargin">Margin</label>
+                    <output id="bcMarginOut" for="bcMargin">10 px</output>
+                  </div>
+                  <input type="range" id="bcMargin" min="0" max="40" step="2" value="10" aria-label="Barcode quiet zone margin in pixels">
+                </div>
+
+                <div class="custom-group">
+                  <p class="group-label" id="bcColorsLabel">Colors</p>
+                  <div class="colors-row" role="group" aria-labelledby="bcColorsLabel">
+                    <div class="color-field">
+                      <label for="bcLineColor">Line color</label>
+                      <div class="color-row">
+                        <input type="color" id="bcLineColor" value="#111111" aria-label="Barcode line color picker">
+                        <input type="text" id="bcLineHex" class="hex-input" value="#111111" maxlength="7" spellcheck="false" aria-label="Barcode line color hex value">
+                      </div>
+                    </div>
+                    <div class="color-field">
+                      <label for="bcBgColor">Background</label>
+                      <div class="color-row">
+                        <input type="color" id="bcBgColor" value="#FFFFFF" aria-label="Barcode background color picker">
+                        <input type="text" id="bcBgHex" class="hex-input" value="#FFFFFF" maxlength="7" spellcheck="false" aria-label="Barcode background color hex value">
+                      </div>
+                    </div>
+                  </div>
+                  <p class="warn" id="bcContrastWarn" hidden></p>
+                </div>
+
+                <div class="custom-group">
+                  <div class="check-row">
+                    <input type="checkbox" id="bcShowValue" checked>
+                    <label for="bcShowValue">Show value under the barcode</label>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <aside class="preview-col">
+              <div class="card preview-card" id="bcPreviewCard">
+                <div class="card-head">
+                  <h2>Barcode Preview</h2>
+                  <button type="button" class="btn btn-ghost btn-sm" id="bcResetBtn">
+                    <svg class="icon"><use href="#i-refresh"/></svg>Reset
+                  </button>
+                </div>
+                <div class="qr-stage bc-stage" id="bcStage">
+                  <div class="qr-placeholder" id="bcPlaceholder">
+                    <svg class="icon icon-qr"><use href="#i-barcode"/></svg>
+                    <p class="qr-placeholder-title">Your barcode will appear here</p>
+                    <p class="qr-placeholder-sub muted">Enter a value and press Generate</p>
+                  </div>
+                  <div class="qr-output bc-output" id="bcOutput" hidden></div>
+                </div>
+                <p class="qr-caption" id="bcCaption" hidden></p>
+                <div class="download-row">
+                  <button type="button" class="btn btn-primary" id="bcDownloadPngBtn" disabled>
+                    <svg class="icon"><use href="#i-download"/></svg>Download PNG
+                  </button>
+                  <button type="button" class="btn btn-ghost" id="bcDownloadSvgBtn" disabled>
+                    <svg class="icon"><use href="#i-download"/></svg>Download SVG
+                  </button>
+                </div>
+                <div class="download-row bc-export-row">
+                  <button type="button" class="btn btn-ghost" id="bcCopyBtn" disabled>
+                    <svg class="icon"><use href="#i-copy"/></svg>Copy SVG code
+                  </button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+
+        <!-- QR generator (existing, untouched) -->
+        <div id="genQr">
         <div class="gen-layout">
           <div class="gen-form-col">
             <form id="genForm" class="card form-card" novalidate>
@@ -289,24 +439,35 @@
             </div>
           </aside>
         </div>
+        </div>
       </section>
 
       <!-- ================= SCAN VIEW ================= -->
       <section id="view-scan" hidden aria-labelledby="scanHeading">
         <header class="view-head">
           <h1 id="scanHeading">Scan QR Code</h1>
-          <p class="muted">Upload an image or use your camera to scan.</p>
+          <p class="muted" id="scanSub">Upload an image or use your camera to scan.</p>
         </header>
+
+        <div class="seg scan-mode-seg" id="scanModeSeg" role="group" aria-label="Scanner mode">
+          <button type="button" class="seg-btn" data-scan-mode="qr" aria-pressed="true">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1" fill="currentColor"/><rect x="9" y="2" width="5" height="5" rx="1" fill="currentColor"/><rect x="2" y="9" width="5" height="5" rx="1" fill="currentColor"/><rect x="9" y="9" width="2" height="2" fill="currentColor"/><rect x="12" y="12" width="2" height="2" fill="currentColor"/><rect x="9" y="12" width="2" height="2" fill="currentColor"/></svg>
+            QR Code
+          </button>
+          <button type="button" class="seg-btn" data-scan-mode="barcode" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><rect x="1.5" y="3.5" width="1.4" height="9"/><rect x="4" y="3.5" width="0.9" height="9"/><rect x="6" y="3.5" width="1.8" height="9"/><rect x="8.9" y="3.5" width="0.9" height="9"/><rect x="10.9" y="3.5" width="1.4" height="9"/><rect x="13.4" y="3.5" width="1.1" height="9"/></g></svg>
+            Barcode
+          </button>
+        </div>
 
         <div class="scan-grid">
           <section class="card scan-card" aria-labelledby="uploadTitle">
             <h2 id="uploadTitle">Upload QR Image</h2>
             <p class="muted card-sub">Drag &amp; drop an image here, or browse your files.</p>
-
             <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Upload a QR image. Click to browse or drop a file here.">
               <svg class="icon icon-lg"><use href="#i-upload"/></svg>
               <p class="dropzone-title">Click to browse or drop an image</p>
-              <p class="dropzone-sub muted">PNG, JPG, JPEG or WEBP</p>
+              <p class="dropzone-sub muted" id="dropzoneSub">PNG, JPG, JPEG or WEBP</p>
             </div>
             <input type="file" id="scanFileInput" accept="image/png,image/jpeg,image/webp" hidden>
 
@@ -322,20 +483,24 @@
               <button type="button" class="btn btn-primary" id="decodeBtn" disabled>Decode</button>
             </div>
           </section>
-
-          <section class="card scan-card" aria-labelledby="cameraTitle">
+          <section class="card scan-card" aria-labelledby="cameraTitle" id="cameraCard">
             <h2 id="cameraTitle">Camera Scanner</h2>
-            <p class="muted card-sub">Point your camera at a QR code to scan it live.</p>
+            <p class="muted card-sub" id="cameraSub">Point your camera at a QR code to scan it live.</p>
 
-            <div class="camera-box" id="cameraBox">
+            <div class="camera-box" id="cameraBox" data-mode="qr">
               <video id="cameraVideo" autoplay muted playsinline></video>
               <div class="camera-idle" id="cameraIdle">
                 <svg class="icon icon-lg"><use href="#i-camera"/></svg>
                 <p class="camera-idle-title">Camera is off</p>
-                <p class="camera-idle-hint">Press &ldquo;Start Camera&rdquo; and point it at a QR code</p>
+                <p class="camera-idle-hint" id="cameraIdleHint">Press &ldquo;Start Camera&rdquo; and point it at a QR code</p>
               </div>
               <div class="scan-frame" id="scanFrame" hidden><span class="scan-line"></span></div>
             </div>
+
+            <p class="scan-status" id="scanStatus" hidden role="status">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span class="scan-status-text">Scanning for QR codes…</span>
+            </p>
 
             <p class="inline-error" id="cameraError" hidden role="alert"></p>
             <div class="scan-actions btn-row">
@@ -356,10 +521,17 @@
         <section class="card history-card" aria-labelledby="historyTitle">
           <div class="card-head">
             <h2 id="historyTitle">Scan history</h2>
-            <button type="button" class="btn btn-ghost btn-sm btn-danger-ghost" id="clearHistoryBtn" hidden>Clear history</button>
+            <div class="history-controls">
+              <div class="seg history-filter" id="historyFilter" role="group" aria-label="Filter scan history" hidden>
+                <button type="button" class="seg-btn" data-history-filter="all" aria-pressed="true">All</button>
+                <button type="button" class="seg-btn" data-history-filter="qr" aria-pressed="false">QR</button>
+                <button type="button" class="seg-btn" data-history-filter="barcode" aria-pressed="false">Barcode</button>
+              </div>
+              <button type="button" class="btn btn-ghost btn-sm btn-danger-ghost" id="clearHistoryBtn" hidden>Clear history</button>
+            </div>
           </div>
           <ul class="history-list" id="historyList"></ul>
-          <p class="muted history-empty" id="historyEmpty">No scans yet. Scanned QR codes will appear here.</p>
+          <p class="muted history-empty" id="historyEmpty">No scans yet. Scanned QR codes and barcodes will appear here.</p>
         </section>
       </section>
     </main>

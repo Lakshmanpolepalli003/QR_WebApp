@@ -50,7 +50,9 @@ const store = {
    ============================================================ */
 const LOCAL_LIBS = {
   qrcode: ['vendor/qrcode.min.js'],
-  jsqr: ['vendor/jsQR.min.js']
+  jsqr: ['vendor/jsQR.min.js'],
+  zxing: ['vendor/zxing.min.js'],
+  jsbarcode: ['vendor/JsBarcode.all.min.js']
 };
 
 const CDN = {
@@ -62,6 +64,15 @@ const CDN = {
   jsqr: [
     'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
     'https://unpkg.com/jsqr@1.4.0/dist/jsQR.min.js'
+  ],
+  zxing: [
+    'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js',
+    'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'
+  ],
+  jsbarcode: [
+    'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js',
+    'https://unpkg.com/jsbarcode@3.11.6/dist/JsBarcode.all.min.js'
   ]
 };
 
@@ -100,6 +111,13 @@ function initEngine() {
       $('#libNotice').hidden = false;
       throw err;
     });
+
+  // Barcode engine (ZXing) — best effort: if it fails, QR scanning keeps
+  // working and barcode mode explains that it is unavailable.
+  state.zxingReady = loadScript(LOCAL_LIBS.zxing.concat(CDN.zxing))
+    .then(() => { state.zxingLoaded = true; return true; })
+    .catch(() => { state.zxingLoaded = false; return false; });
+
   return engineReady;
 }
 
@@ -116,7 +134,11 @@ const KEYS = {
   view: 'qr-studio-view',
   type: 'qr-studio-type',
   custom: 'qr-studio-custom',
-  history: 'qr-studio-history'
+  history: 'qr-studio-history',
+  scanMode: 'qr-studio-scan-mode',
+  genMode: 'qr-studio-gen-mode',
+  bcCustom: 'qr-studio-bc-custom',
+  bcValue: 'qr-studio-bc-value'
 };
 
 const SIZES = [256, 384, 512, 768, 1024];
@@ -148,7 +170,12 @@ const state = {
   cameraStream: null,
   cameraTimer: null,
   clearArmedTimer: null,
-  libsLocal: false
+  libsLocal: false,
+  scanMode: 'qr',
+  historyFilter: 'all',
+  zxingReady: null,
+  zxingLoaded: false,
+  genMode: 'qr'
 };
 
 /* ============================================================
@@ -1134,6 +1161,151 @@ function initDownloads() {
 }
 
 /* ============================================================
+   11b. Scan mode (QR / Barcode) + barcode decode engine
+   ============================================================ */
+const SCAN_MODE_TEXT = {
+  qr: {
+    heading: 'Scan QR Code',
+    sub: 'Upload an image or use your camera to scan.',
+    uploadTitle: 'Upload QR Image',
+    cameraTitle: 'Camera Scanner',
+    cameraSub: 'Point your camera at a QR code to scan it live.',
+    cameraIdleHint: 'Press \u201CStart Camera\u201D and point it at a QR code',
+    dropzoneSub: 'PNG, JPG, JPEG or WEBP',
+    decodeBtn: 'Decode'
+  },
+  barcode: {
+    heading: 'Barcode Scanner',
+    sub: 'Scan a barcode using your camera or upload a barcode image.',
+    uploadTitle: 'Upload Barcode Image',
+    cameraTitle: 'Barcode Scanner',
+    cameraSub: 'Point your camera at a barcode to scan it live.',
+    cameraIdleHint: 'Press \u201CStart Camera\u201D and point it at a barcode',
+    dropzoneSub: 'EAN, UPC, Code 128/39, ITF, Data Matrix & more',
+    decodeBtn: 'Decode Barcode'
+  }
+};
+
+// 1D + 2D formats the vendored ZXing build genuinely decodes. Formats are kept
+// only if the library actually exposes them — no fake support. Computed lazily
+// so Node-based tests (no window) still load this module.
+function barcodeFormatEnums() {
+  if (!state._barcodeFormats) {
+    const names = [
+      'QR_CODE', // must stay in POSSIBLE_FORMATS or QR decoding regresses
+      'EAN_13', 'EAN_8', 'UPC_A', 'UPC_E',
+      'CODE_128', 'CODE_39', 'CODE_93', 'ITF', 'CODABAR',
+      'DATA_MATRIX', 'PDF_417', 'AZTEC'
+    ].filter((f) => Boolean(window.ZXing && window.ZXing.BarcodeFormat && window.ZXing.BarcodeFormat[f] !== undefined));
+    state._barcodeFormats = names;
+  }
+  return state._barcodeFormats;
+}
+
+const BARCODE_LABELS = {
+  EAN_13: 'EAN-13', EAN_8: 'EAN-8', UPC_A: 'UPC-A', UPC_E: 'UPC-E',
+  CODE_128: 'Code 128', CODE_39: 'Code 39', CODE_93: 'Code 93',
+  ITF: 'ITF', CODABAR: 'Codabar',
+  DATA_MATRIX: 'Data Matrix', PDF_417: 'PDF417', AZTEC: 'Aztec',
+  QR_CODE: 'QR Code'
+};
+
+function barcodeFormatName(fmt) {
+  if (fmt === undefined || fmt === null) return null;
+  if (typeof fmt === 'string') return BARCODE_LABELS[fmt] || fmt;
+  const name = window.ZXing && window.ZXing.BarcodeFormat ? window.ZXing.BarcodeFormat[fmt] : null;
+  return name ? (BARCODE_LABELS[name] || name) : null;
+}
+
+function zxingReader() {
+  const ZX = window.ZXing;
+  if (!ZX || !ZX.MultiFormatReader) return null;
+  if (!state._zxReader) {
+    const reader = new ZX.MultiFormatReader();
+    const hints = new Map();
+    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, barcodeFormatEnums().map((f) => ZX.BarcodeFormat[f]));
+    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+    reader.setHints(hints);
+    state._zxReader = reader;
+  }
+  return state._zxReader;
+}
+
+// Decode a raw RGBA frame (ImageData.data) with ZXing.
+// Returns { text, formatName } or null when nothing is found.
+function zxingDecodeImageData(frameData, w, h) {
+  const ZX = window.ZXing;
+  const reader = zxingReader();
+  if (!ZX || !reader) return null;
+  const len = w * h;
+  const gray = new Uint8ClampedArray(len);
+  for (let i = 0; i < len; i++) {
+    const j = i * 4;
+    // Standard RGB luma weights (as used by ZXing's own RGB converters).
+    gray[i] = (frameData[j] * 306 + frameData[j + 1] * 601 + frameData[j + 2] * 117) >> 10;
+  }
+  const binarizers = [ZX.HybridBinarizer, ZX.GlobalHistogramBinarizer];
+  for (const B of binarizers) {
+    try {
+      const source = new ZX.RGBLuminanceSource(gray, w, h);
+      const bitmap = new ZX.BinaryBitmap(new B(source));
+      const res = reader.decodeWithState(bitmap);
+      const text = res && res.getText ? res.getText() : '';
+      if (text) return { text: String(text), formatName: barcodeFormatName(res.getBarcodeFormat()) };
+    } catch (e) { /* nothing found with this binarizer — try the next */ }
+    try { reader.reset(); } catch (e) { /* ignore */ }
+  }
+  return null;
+}
+
+function setScanMode(mode) {
+  if (mode !== 'qr' && mode !== 'barcode') return;
+  const changed = state.scanMode !== mode;
+  state.scanMode = mode;
+  try { localStorage.setItem(KEYS.scanMode, mode); } catch (e) { /* ignore */ }
+
+  $$('#scanModeSeg .seg-btn').forEach((b) =>
+    b.setAttribute('aria-pressed', String(b.dataset.scanMode === mode))
+  );
+
+  const t = SCAN_MODE_TEXT[mode];
+  $('#scanHeading').textContent = t.heading;
+  $('#scanSub').textContent = t.sub;
+  $('#uploadTitle').textContent = t.uploadTitle;
+  $('#cameraTitle').textContent = t.cameraTitle;
+  $('#cameraSub').textContent = t.cameraSub;
+  $('#cameraIdleHint').textContent = t.cameraIdleHint;
+  $('#decodeBtn').textContent = t.decodeBtn;
+  const dzSub = $('#dropzoneSub');
+  if (dzSub) dzSub.textContent = t.dropzoneSub;
+  document.title = 'QR Studio — ' + t.heading;
+
+  $('#cameraBox').dataset.mode = mode;
+
+  if (changed) {
+    if (state.uploadUrl || state.uploadFile) clearUploadImage(); // reset pending upload
+    if (state.cameraStream) stopCamera();                        // never keep a stream across modes
+    hideResult();
+  }
+  renderHistory(); // re-render so empty-state copy matches the active mode
+}
+
+function initScanMode() {
+  $$('#scanModeSeg .seg-btn').forEach((b) =>
+    b.addEventListener('click', () => setScanMode(b.dataset.scanMode))
+  );
+  $$('#historyFilter .seg-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      state.historyFilter = b.dataset.historyFilter;
+      renderHistory();
+    })
+  );
+  let saved = 'qr';
+  try { saved = localStorage.getItem(KEYS.scanMode) || 'qr'; } catch (e) { /* ignore */ }
+  setScanMode(saved === 'barcode' ? 'barcode' : 'qr');
+}
+
+/* ============================================================
    12. Scan view — upload & decode
    ============================================================ */
 function showUploadError(msg) {
@@ -1196,7 +1368,7 @@ async function decodeImageFile(file) {
     i.src = dataUrl;
   });
 
-  const maxDim = 1400;
+  const maxDim = 1600;
   const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
   const w = Math.max(1, Math.round(img.naturalWidth * scale));
   const h = Math.max(1, Math.round(img.naturalHeight * scale));
@@ -1206,6 +1378,9 @@ async function decodeImageFile(file) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(img, 0, 0, w, h);
   const data = ctx.getImageData(0, 0, w, h);
+  if (state.scanMode === 'barcode') {
+    return zxingDecodeImageData(data.data, w, h);
+  }
   const code = window.jsQR(data.data, w, h, { inversionAttempts: 'attemptBoth' });
   return code ? code.data : null;
 }
@@ -1216,14 +1391,21 @@ async function onDecode() {
     showUploadError('QR engine failed to load. Check your connection and reload the page.');
     return;
   }
+  if (state.scanMode === 'barcode' && !state.zxingLoaded) {
+    showUploadError('Barcode engine failed to load. Check your connection and reload the page.');
+    return;
+  }
   const btn = $('#decodeBtn');
   btn.disabled = true;
+  hideResult(); // never leave a stale previous result under a new decode
   const original = btn.textContent;
   btn.textContent = 'Decoding…';
   try {
     const result = await decodeImageFile(state.uploadFile);
     if (result) {
       handleScanSuccess(result);
+    } else if (state.scanMode === 'barcode') {
+      showUploadError('No barcode was detected in this image.');
     } else {
       showUploadError('No QR code was detected in this image.');
     }
@@ -1279,6 +1461,18 @@ function setCameraUi(active) {
   $('#scanFrame').hidden = !active;
   $('#startCamBtn').disabled = active;
   $('#stopCamBtn').disabled = !active;
+  const status = $('#scanStatus');
+  if (status) {
+    status.hidden = !active;
+    status.classList.remove('found');
+    if (active) {
+      status.classList.add('scanning');
+      $('.scan-status-text', status).textContent =
+        'Scanning for ' + (state.scanMode === 'barcode' ? 'barcodes…' : 'QR codes…');
+    } else {
+      status.classList.remove('scanning');
+    }
+  }
 }
 
 async function startCamera() {
@@ -1293,6 +1487,10 @@ async function startCamera() {
   }
   if (!window.isSecureContext) {
     showCameraError('Camera access requires a secure connection. Open QR Studio over HTTPS or localhost.');
+    return;
+  }
+  if (state.scanMode === 'barcode' && !state.zxingLoaded) {
+    showCameraError('Barcode engine failed to load. Check your connection and reload the page.');
     return;
   }
   setCameraUi(true);
@@ -1318,6 +1516,15 @@ async function startCamera() {
       if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
       ctx.drawImage(video, 0, 0, w, h);
       const frame = ctx.getImageData(0, 0, w, h);
+      if (state.scanMode === 'barcode') {
+        const hit = zxingDecodeImageData(frame.data, w, h);
+        if (hit && hit.text) {
+          stopCamera();
+          if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) { /* ignore */ } }
+          handleScanSuccess(hit);
+        }
+        return;
+      }
       const code = window.jsQR(frame.data, w, h, { inversionAttempts: 'dontInvert' });
       if (code && code.data) {
         stopCamera();
@@ -1359,6 +1566,27 @@ function initCamera() {
 /* ============================================================
    14. Scan results — classification, rendering, actions
    ============================================================ */
+function hideResult() {
+  $('#resultCard').hidden = true;
+  const badge = $('#resultBadge');
+  badge.hidden = true;
+  $('#resultBody').replaceChildren();
+  state.lastResult = null;
+}
+
+function classifyBarcode(hit) {
+  const raw = String(hit.text || '').trim();
+  if (!raw) return null;
+  // Only a genuinely valid http/https value counts as a URL (never a bare
+  // product number, never a javascript: link). URL barcodes keep their
+  // barcode metadata so the format badge/details still render.
+  const http = safeHttpUrl(raw);
+  const base = http
+    ? { type: 'URL', label: 'URL', icon: 'i-link', openUrl: http }
+    : { type: 'Barcode', label: 'Barcode', icon: 'i-barcode' };
+  return Object.assign(base, { raw, isBarcode: true, barcodeFormat: hit.formatName || null });
+}
+
 const safeHttpUrl = (u) => {
   try {
     const url = new URL(u);
@@ -1542,11 +1770,21 @@ function renderResult(res) {
   body.replaceChildren();
 
   const contentSection = el('div', 'result-section');
-  contentSection.appendChild(el('p', 'result-label', 'Content'));
+  contentSection.appendChild(el('p', 'result-label', res.isBarcode ? 'Barcode Number / Value' : 'Content'));
   contentSection.appendChild(el('p', 'result-content', res.raw));
   body.appendChild(contentSection);
 
-  if (res.details && res.details.length) {
+  if (res.isBarcode && res.barcodeFormat) {
+    const detailsSection = el('div', 'result-section');
+    detailsSection.appendChild(el('p', 'result-label', 'Details'));
+    const dl = el('dl', 'result-details');
+    const row = el('div');
+    row.appendChild(el('dt', null, 'Format'));
+    row.appendChild(el('dd', null, res.barcodeFormat));
+    dl.appendChild(row);
+    detailsSection.appendChild(dl);
+    body.appendChild(detailsSection);
+  } else if (res.details && res.details.length) {
     const detailsSection = el('div', 'result-section');
     detailsSection.appendChild(el('p', 'result-label', 'Details'));
     const dl = el('dl', 'result-details');
@@ -1568,11 +1806,28 @@ function renderResult(res) {
 }
 
 function handleScanSuccess(content) {
-  const res = classify(content);
+  // QR paths pass a string; barcode paths pass { text, formatName }.
+  const res = (content && typeof content === 'object' && content.text !== undefined)
+    ? (classifyBarcode(content) || classify(String(content.text)))
+    : classify(content);
   state.lastResult = res;
   renderResult(res);
-  addHistory({ type: res.label, icon: res.icon, content: res.raw, ts: Date.now() });
-  toast('QR code detected', 'success');
+  addHistory({
+    type: res.label,
+    icon: res.icon,
+    content: res.raw,
+    kind: res.isBarcode ? 'barcode' : 'qr',
+    format: res.isBarcode ? (res.barcodeFormat || 'Barcode') : res.label,
+    ts: Date.now()
+  });
+  toast(res.isBarcode ? 'Barcode detected' : 'QR code detected', 'success');
+  const status = $('#scanStatus');
+  if (status && !status.hidden) {
+    status.classList.remove('scanning');
+    status.classList.add('found');
+    $('.scan-status-text', status).textContent =
+      (res.isBarcode ? 'Barcode' : 'QR code') + ' detected';
+  }
   if (window.matchMedia('(max-width: 900px)').matches) {
     const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
     $('#resultCard').scrollIntoView({ behavior, block: 'start' });
@@ -1600,11 +1855,39 @@ function formatHistoryTime(ts) {
 function renderHistory() {
   const list = $('#historyList');
   list.replaceChildren();
-  $('#historyEmpty').hidden = state.history.length > 0;
+
+  const filter = state.historyFilter || 'all';
+  const hasBarcode = state.history.some((h) => h.kind === 'barcode');
+  const filterSeg = $('#historyFilter');
+  if (filterSeg) filterSeg.hidden = !hasBarcode;
+  $$('#historyFilter .seg-btn').forEach((b) =>
+    b.setAttribute('aria-pressed', String(b.dataset.historyFilter === filter))
+  );
+
+  const visible = state.history.filter((h) => {
+    if (filter === 'qr') return h.kind !== 'barcode';
+    if (filter === 'barcode') return h.kind === 'barcode';
+    return true;
+  });
+
+  const empty = $('#historyEmpty');
+  if (!state.history.length) {
+    empty.textContent = state.scanMode === 'barcode'
+      ? 'No scans yet. Scanned barcodes will appear here.'
+      : 'No scans yet. Scanned QR codes will appear here.';
+    empty.hidden = false;
+  } else if (!visible.length) {
+    empty.textContent = filter === 'barcode'
+      ? 'No barcode scans yet.'
+      : 'No QR scans yet.';
+    empty.hidden = false;
+  } else {
+    empty.hidden = true;
+  }
   $('#clearHistoryBtn').hidden = state.history.length === 0;
   disarmClear();
 
-  state.history.forEach((h) => {
+  visible.forEach((h) => {
     const li = el('li');
 
     const iconWrap = el('span', 'history-icon');
@@ -1614,7 +1897,10 @@ function renderHistory() {
     const body = el('div', 'history-body');
     body.appendChild(el('p', 'history-content', truncate(String(h.content || '').replace(/\s+/g, ' ').trim(), 90)));
     const meta = el('p', 'history-meta');
-    meta.appendChild(el('span', 'history-type', h.type || 'Text'));
+    const kindTag = el('span', 'history-type-tag' + (h.kind === 'barcode' ? ' barcode' : ''),
+      h.kind === 'barcode' ? 'Barcode' : 'QR');
+    meta.appendChild(kindTag);
+    meta.appendChild(el('span', 'history-type', h.format || h.type || 'Text'));
     meta.appendChild(el('span', null, formatHistoryTime(h.ts)));
     body.appendChild(meta);
     li.appendChild(body);
@@ -1647,7 +1933,15 @@ function renderHistory() {
 
 function addHistory(entry) {
   const id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
-  state.history.unshift({ id, type: entry.type, icon: entry.icon, content: entry.content, ts: entry.ts });
+  state.history.unshift({
+    id,
+    type: entry.type,
+    icon: entry.icon,
+    content: entry.content,
+    kind: entry.kind || 'qr',
+    format: entry.format || entry.type || 'Text',
+    ts: entry.ts
+  });
   if (state.history.length > HISTORY_MAX) state.history.length = HISTORY_MAX;
   saveHistory();
   renderHistory();
@@ -1703,6 +1997,9 @@ function init() {
   initUpload();
   initCamera();
   initHistory();
+  initScanMode();
+  initGenMode();
+  initBarcodeGen();
 
   $('#genForm').addEventListener('submit', onGenerate);
   $('#clearBtn').addEventListener('click', onClear);
@@ -1724,6 +2021,423 @@ if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
 
+/* ============================================================
+   12. Barcode generator (Generate view → Barcode mode)
+   Real, machine-readable rendering via JsBarcode (local first,
+   CDN fallback). Live preview, per-format validation, PNG/SVG export.
+   ============================================================ */
+const GEN_BC_TEXT = {
+  heading: 'Barcode Generator',
+  desc: 'Enter a value and create a real, scannable barcode.'
+};
+
+const BC_FORMATS = ['CODE128', 'CODE39', 'EAN13', 'EAN8', 'UPC', 'UPCE', 'ITF14', 'ITF', 'codabar'];
+
+const bcFormatLabel = (f) => ({
+  CODE128: 'CODE128', CODE39: 'CODE39', EAN13: 'EAN-13', EAN8: 'EAN-8',
+  UPC: 'UPC-A', UPCE: 'UPC-E', ITF14: 'ITF-14', ITF: 'ITF', codabar: 'Codabar'
+}[f] || f);
+
+const BC_FORMAT_HINTS = {
+  CODE128: 'Letters, digits and common ASCII symbols are supported.',
+  CODE39: 'Uppercase A–Z, digits and the symbols - . $ / + % space.',
+  EAN13: 'Exactly 12 digits (check digit added automatically) or 13 digits with a valid check digit.',
+  EAN8: 'Exactly 7 digits (check digit added automatically) or 8 digits with a valid check digit.',
+  UPC: 'Exactly 11 digits (check digit added automatically) or 12 digits with a valid check digit.',
+  UPCE: '6–7 digits (check digit added automatically) or 8 digits with a valid UPC-E check digit.',
+  ITF14: 'Exactly 13 digits (check digit added automatically) or 14 digits with a valid check digit.',
+  ITF: 'An even number of digits (2–32).',
+  codabar: 'Digits and - $ : / . + between start/stop letters A–D, e.g. A123456B.'
+};
+
+/* JsBarcode option state — synced to the UI inputs on load/reset. */
+const bcOptions = {
+  format: 'CODE128',
+  width: 2,
+  height: 80,
+  fontSize: 18,
+  margin: 10,
+  linecolor: '#111111',
+  background: '#FFFFFF',
+  displayValue: true
+};
+const BC_DEFAULTS = Object.freeze(JSON.parse(JSON.stringify(bcOptions)));
+
+let barcodeReady = null;   // cached loadScript promise (mirrors engineReady/zxingReady)
+let barcodeSvg = null;     // last generated SVG string
+let bcGenerated = false;   // has the user pressed Generate with a valid value?
+
+function ensureBarcodeLib() {
+  if (!barcodeReady) {
+    barcodeReady = loadScript(LOCAL_LIBS.jsbarcode.concat(CDN.jsbarcode))
+      .then(() => {
+        if (typeof window.JsBarcode !== 'function') throw new Error('JsBarcode failed to load');
+        return window.JsBarcode;
+      })
+      .catch((err) => { barcodeReady = null; throw err; });
+  }
+  return barcodeReady;
+}
+
+/* Mod-10 check digit (GS1 3/1 weighting) shared by EAN/UPC/ITF-14. */
+function gs1CheckDigit(digits) {
+  const d = String(digits);
+  let sum = 0;
+  for (let i = 0; i < d.length; i++) sum += Number(d[d.length - 1 - i]) * (i % 2 === 0 ? 3 : 1);
+  return String((10 - (sum % 10)) % 10);
+}
+
+/* UPC-E body (number-system digit + 6 compressed digits) → 11-digit UPC-A body.
+   Expansion table per GS1 (mirrors ZXing's UPCEReader, verified empirically). */
+function upceToUpcaBody(v7) {
+  const ns = v7[0];
+  const d = v7.slice(1);           // the 6 compressed digits
+  const last = d[5];
+  let mid;
+  if (last === '0' || last === '1' || last === '2') mid = d.slice(0, 2) + last + '0000' + d.slice(2, 5);
+  else if (last === '3') mid = d.slice(0, 3) + '10000' + d.slice(3, 5);
+  else if (last === '4') mid = d.slice(0, 4) + '00000' + d.slice(4, 5);
+  else mid = d.slice(0, 5) + '0000' + last;
+  return ns + mid;                 // 11 digits
+}
+
+/* Per-format validators. Return null when valid, else a friendly message.
+   Rules mirror the vendored JsBarcode encoders: short input gets the check
+   digit added automatically, full-length input must carry a valid one. */
+function bcValidate(format, raw) {
+  const v = String(raw == null ? '' : raw).trim();
+  if (!v) return 'Please enter a barcode value.';
+  const digits = /^[0-9]+$/;
+  switch (format) {
+    case 'CODE128':
+      if (!/^[ -~]+$/.test(v)) return 'CODE128 supports only ASCII characters (no accents or emoji).';
+      return null;
+    case 'CODE39':
+      if (!/^[0-9A-Z\-. $/+%]+$/.test(v)) return 'CODE39 supports only A–Z, digits, spaces and - . $ / + %.';
+      return null;
+    case 'EAN13':
+      if (!digits.test(v) || (v.length !== 12 && v.length !== 13)) return 'EAN-13 requires a valid 12/13-digit value.';
+      if (v.length === 13 && gs1CheckDigit(v.slice(0, 12)) !== v[12]) return 'Invalid EAN-13 check digit.';
+      return null;
+    case 'EAN8':
+      if (!digits.test(v) || (v.length !== 7 && v.length !== 8)) return 'EAN-8 requires a valid 7/8-digit value.';
+      if (v.length === 8 && gs1CheckDigit(v.slice(0, 7)) !== v[7]) return 'Invalid EAN-8 check digit.';
+      return null;
+    case 'UPC':
+      if (!digits.test(v) || (v.length !== 11 && v.length !== 12)) return 'UPC-A requires a valid 11/12-digit value.';
+      if (v.length === 12 && gs1CheckDigit(v.slice(0, 11)) !== v[11]) return 'Invalid UPC-A check digit.';
+      return null;
+    case 'UPCE': {
+      if (!digits.test(v) || (v.length !== 6 && v.length !== 7 && v.length !== 8)) return 'UPC-E requires a valid 6–8-digit value.';
+      if (v.length >= 7 && v[0] !== '0' && v[0] !== '1') return 'UPC-E number system must be 0 or 1.';
+      if (v.length === 6 || v.length === 7) return null;   // check digit added automatically
+      const expected = gs1CheckDigit(upceToUpcaBody(v.slice(0, 7)));
+      if (v[7] !== expected) return 'Invalid UPC-E check digit.';
+      return null;
+    }
+    case 'ITF14':
+      if (!digits.test(v) || (v.length !== 13 && v.length !== 14)) return 'ITF-14 requires a valid 13/14-digit value.';
+      if (v.length === 14 && gs1CheckDigit(v.slice(0, 13)) !== v[13]) return 'Invalid ITF-14 check digit.';
+      return null;
+    case 'ITF':
+      if (!digits.test(v)) return 'ITF supports digits only.';
+      if (v.length % 2 !== 0) return 'ITF requires an even number of digits.';
+      if (v.length < 2 || v.length > 32) return 'ITF requires 2–32 digits (even length).';
+      return null;
+    case 'codabar':
+      if (!/^[A-D][0-9\-$:.+/]+[A-D]$/.test(v)) return 'Codabar needs digits and - $ : / . + between start/stop letters A–D (e.g. A123456B).';
+      return null;
+  }
+  return 'Unsupported barcode format.';
+}
+
+function showBcError(msg) {
+  const errEl = $('#bcValue-err');
+  if (msg) { errEl.textContent = msg; errEl.hidden = false; }
+  else errEl.hidden = true;
+}
+
+function hideBcPreview() {
+  $('#bcOutput').hidden = true;
+  $('#bcPlaceholder').hidden = false;
+  $('#bcCaption').hidden = true;
+}
+
+function setBcDownloads(enabled) {
+  $('#bcDownloadPngBtn').disabled = !enabled;
+  $('#bcDownloadSvgBtn').disabled = !enabled;
+  $('#bcCopyBtn').disabled = !enabled;
+}
+
+/* Live preview on any input/format/option change (the committed state only
+   changes when Generate is pressed, mirroring the QR flow). */
+function bcSettingsChanged() {
+  const v = $('#bcValue').value.trim();
+  const fmt = $('#bcFormat').value;
+  const msg = bcValidate(fmt, v);
+  showBcError(msg);
+  updateBcContrastWarning();
+  if (msg) { hideBcPreview(); return; }
+  ensureBarcodeLib()
+    .then(() => { renderBcSvg(v, fmt); })
+    .catch(() => { /* toasts on load failure surface via Generate */ });
+}
+
+/* Render a real JsBarcode SVG into the preview. Returns true on success. */
+function renderBcSvg(value, format) {
+  const out = $('#bcOutput');
+  out.textContent = '';                       // clean up the previous render
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  out.appendChild(svg);
+  let ok = false;
+  window.JsBarcode(svg, value, {
+    format,
+    width: bcOptions.width,
+    height: bcOptions.height,
+    displayValue: bcOptions.displayValue,
+    fontSize: bcOptions.fontSize,
+    margin: bcOptions.margin,
+    lineColor: bcOptions.linecolor,
+    background: bcOptions.background,
+    valid(v) { ok = v; }
+  });
+  if (!ok) {                                   // belt & braces — validators catch this first
+    showBcError('Please enter a valid barcode value.');
+    hideBcPreview();
+    return false;
+  }
+  $('#bcPlaceholder').hidden = true;
+  out.hidden = false;
+  const cap = $('#bcCaption');
+  cap.textContent = value;                     // untrusted value via textContent only
+  cap.hidden = false;
+  barcodeSvg = svg.outerHTML;
+  return true;
+}
+
+async function onBcGenerate(e) {
+  e.preventDefault();
+  const input = $('#bcValue');
+  const v = input.value.trim();
+  const fmt = $('#bcFormat').value;
+  const msg = bcValidate(fmt, v);
+  if (msg) {
+    showBcError(msg);
+    toast('Please enter a valid barcode value.', 'error');
+    input.focus();
+    return;
+  }
+  try {
+    await ensureBarcodeLib();
+  } catch (err) {
+    toast('Barcode engine failed to load. Check your connection and reload the page.', 'error');
+    return;
+  }
+  if (!renderBcSvg(v, fmt)) {
+    toast('Please enter a valid barcode value.', 'error');
+    return;
+  }
+  bcGenerated = true;
+  setBcDownloads(true);
+  store.set(KEYS.bcValue, { format: fmt, value: input.value });
+  toast('Barcode generated', 'success');
+}
+
+function onBcClear() {
+  $('#bcValue').value = '';
+  showBcError(null);
+  bcGenerated = false;
+  barcodeSvg = null;
+  setBcDownloads(false);
+  hideBcPreview();
+  $('#bcValue').focus();
+}
+
+function onBcReset() {
+  Object.assign(bcOptions, JSON.parse(JSON.stringify(BC_DEFAULTS)));
+  $('#bcFormat').value = bcOptions.format;
+  $('#bcValueHint').textContent = BC_FORMAT_HINTS[bcOptions.format] || '';
+  reflectBcOptions();
+  onBcClear();
+  try { localStorage.removeItem(KEYS.bcValue); localStorage.removeItem(KEYS.bcCustom); } catch (err) { /* ignore */ }
+}
+
+function persistBc() {
+  store.set(KEYS.bcCustom, bcOptions);
+}
+
+function reflectBcOptions() {
+  $('#bcWidth').value = String(bcOptions.width);
+  $('#bcWidthOut').textContent = String(bcOptions.width);
+  $('#bcHeight').value = String(bcOptions.height);
+  $('#bcHeightOut').textContent = bcOptions.height + ' px';
+  $('#bcFontSize').value = String(bcOptions.fontSize);
+  $('#bcFontSizeOut').textContent = bcOptions.fontSize + ' px';
+  $('#bcMargin').value = String(bcOptions.margin);
+  $('#bcMarginOut').textContent = bcOptions.margin + ' px';
+  $('#bcLineColor').value = safeHex(bcOptions.linecolor, '#111111');
+  $('#bcLineHex').value = safeHex(bcOptions.linecolor, '#111111').toUpperCase();
+  $('#bcBgColor').value = safeHex(bcOptions.background, '#FFFFFF');
+  $('#bcBgHex').value = safeHex(bcOptions.background, '#FFFFFF').toUpperCase();
+  $('#bcShowValue').checked = bcOptions.displayValue;
+  updateBcContrastWarning();
+}
+
+function updateBcContrastWarning() {
+  const lum = (hex) => {
+    const v = [1, 3, 5].map((i) => {
+      let x = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  };
+  const l1 = lum(safeHex(bcOptions.linecolor, '#111111'));
+  const l2 = lum(safeHex(bcOptions.background, '#FFFFFF'));
+  const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  const warn = $('#bcContrastWarn');
+  if (ratio < 3) {
+    warn.textContent = 'Low contrast may make this barcode difficult to scan.';
+    warn.hidden = false;
+  } else {
+    warn.hidden = true;
+  }
+}
+
+function bcFileBase() {
+  return 'qr-studio-barcode-' + bcOptions.format.toLowerCase() + '-' + Date.now();
+}
+
+async function onBcDownloadPng() {
+  if (!bcGenerated || !barcodeSvg) return;
+  try {
+    // Rasterize the vector SVG at 3× its natural size — geometric scaling,
+    // so bars stay perfectly sharp (no screenshot / no blur).
+    const wM = barcodeSvg.match(/width="(\d+(?:\.\d+)?)"/);
+    const hM = barcodeSvg.match(/height="(\d+(?:\.\d+)?)"/);
+    const natW = wM ? parseFloat(wM[1]) : 260;
+    const natH = hM ? parseFloat(hM[1]) : 100;
+    const scale = 3;
+    const blob = await rasterizeSvg(barcodeSvg, Math.round(natW * scale), Math.round(natH * scale));
+    downloadBlob(blob, bcFileBase() + '.png');
+    toast('PNG downloaded', 'success');
+  } catch (err) {
+    toast('Download failed. Please try again.', 'error');
+  }
+}
+
+function onBcDownloadSvg() {
+  if (!bcGenerated || !barcodeSvg) return;
+  try {
+    downloadBlob(new Blob([barcodeSvg], { type: 'image/svg+xml;charset=utf-8' }), bcFileBase() + '.svg');
+    toast('SVG downloaded', 'success');
+  } catch (err) {
+    toast('Download failed. Please try again.', 'error');
+  }
+}
+
+/* Generate-view mode switch (QR Code / Barcode). */
+function setGenMode(mode) {
+  if (mode !== 'qr' && mode !== 'barcode') mode = 'qr';
+  state.genMode = mode;
+  const isBc = mode === 'barcode';
+  $('#genBarcode').hidden = !isBc;
+  $('#genQr').hidden = isBc;
+  $$('#genModeSeg .seg-btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.genMode === mode)));
+  const def = isBc ? GEN_BC_TEXT : TYPES[state.currentType];
+  $('#genHeading').textContent = def.heading;
+  $('#genDesc').textContent = def.desc;
+  document.title = 'QR Studio — ' + def.heading;
+  store.set(KEYS.genMode, mode);
+}
+
+function initGenMode() {
+  $$('#genModeSeg .seg-btn').forEach((b) => {
+    b.addEventListener('click', () => setGenMode(b.dataset.genMode));
+  });
+}
+
+function initBarcodeGen() {
+  // Restore persisted customization (validated + clamped)
+  const saved = store.get(KEYS.bcCustom, null);
+  if (saved && typeof saved === 'object') {
+    if (BC_FORMATS.includes(saved.format)) bcOptions.format = saved.format;
+    const num = (v, min, max, fb) => (typeof v === 'number' && v >= min && v <= max ? v : fb);
+    bcOptions.width = num(saved.width, 1, 5, bcOptions.width);
+    bcOptions.height = num(saved.height, 30, 160, bcOptions.height);
+    bcOptions.fontSize = num(saved.fontSize, 10, 32, bcOptions.fontSize);
+    bcOptions.margin = num(saved.margin, 0, 40, bcOptions.margin);
+    bcOptions.linecolor = safeHex(saved.linecolor, bcOptions.linecolor);
+    bcOptions.background = safeHex(saved.background, bcOptions.background);
+    if (typeof saved.displayValue === 'boolean') bcOptions.displayValue = saved.displayValue;
+  }
+  const savedVal = store.get(KEYS.bcValue, null);
+  if (savedVal && typeof savedVal === 'object') {
+    if (BC_FORMATS.includes(savedVal.format)) $('#bcFormat').value = savedVal.format;
+    bcOptions.format = $('#bcFormat').value;
+    if (typeof savedVal.value === 'string') $('#bcValue').value = savedVal.value;
+  }
+  $('#bcValueHint').textContent = BC_FORMAT_HINTS[bcOptions.format] || '';
+  reflectBcOptions();
+
+  $('#bcGenForm').addEventListener('submit', onBcGenerate);
+  $('#bcClearBtn').addEventListener('click', onBcClear);
+  $('#bcResetBtn').addEventListener('click', onBcReset);
+  $('#bcDownloadPngBtn').addEventListener('click', onBcDownloadPng);
+  $('#bcDownloadSvgBtn').addEventListener('click', onBcDownloadSvg);
+  $('#bcCopyBtn').addEventListener('click', () => {
+    if (barcodeSvg) copyWithToast(barcodeSvg, 'SVG code copied');
+  });
+
+  $('#bcFormat').addEventListener('change', () => {
+    bcOptions.format = $('#bcFormat').value;
+    $('#bcValueHint').textContent = BC_FORMAT_HINTS[bcOptions.format] || '';
+    persistBc();
+    bcSettingsChanged();
+  });
+  $('#bcValue').addEventListener('input', bcSettingsChanged);
+
+  [['bcWidth', 'width'], ['bcHeight', 'height'], ['bcFontSize', 'fontSize'], ['bcMargin', 'margin']].forEach(([id, key]) => {
+    $('#' + id).addEventListener('input', (e) => {
+      bcOptions[key] = Number(e.target.value);
+      const out = $('#' + id + 'Out');
+      out.textContent = key === 'width' ? String(bcOptions[key]) : bcOptions[key] + ' px';
+      persistBc();
+      bcSettingsChanged();
+    });
+  });
+
+  const bindBcColor = (colorId, hexId, key) => {
+    const colorInput = $('#' + colorId);
+    const hexInput = $('#' + hexId);
+    colorInput.addEventListener('input', () => {
+      bcOptions[key] = colorInput.value;
+      hexInput.value = colorInput.value.toUpperCase();
+      persistBc();
+      bcSettingsChanged();
+    });
+    hexInput.addEventListener('input', () => {
+      const v = safeHex(hexInput.value.trim(), '');
+      if (v) {
+        bcOptions[key] = v;
+        colorInput.value = v;
+        persistBc();
+        bcSettingsChanged();
+      }
+    });
+    hexInput.addEventListener('change', () => {
+      hexInput.value = safeHex(hexInput.value.trim(), bcOptions[key]).toUpperCase();
+    });
+  };
+  bindBcColor('bcLineColor', 'bcLineHex', 'linecolor');
+  bindBcColor('bcBgColor', 'bcBgHex', 'background');
+
+  $('#bcShowValue').addEventListener('change', (e) => {
+    bcOptions.displayValue = e.target.checked;
+    persistBc();
+    bcSettingsChanged();
+  });
+}
+
 /* Node export for tests — the browser ignores typeof-module code paths. */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -1735,6 +2449,16 @@ if (typeof module !== 'undefined' && module.exports) {
     escVcard,
     escXml,
     truncate,
-    store
+    store,
+    classifyBarcode,
+    barcodeFormatName,
+    BARCODE_LABELS,
+    bcValidate,
+    gs1CheckDigit,
+    upceToUpcaBody,
+    bcFormatLabel,
+    BC_FORMATS,
+    zxingDecodeImageData,
+    decodeImageFile
   };
 }
