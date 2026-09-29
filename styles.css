@@ -385,6 +385,19 @@ main {
 }
 .inline-error .icon { width: 15px; height: 15px; margin-top: 2px; }
 
+/* Camera permission help (blocked state) — neutral styling, existing tokens */
+.inline-error.has-help { flex-direction: column; }
+.inline-error.has-help .cam-help { margin-top: 8px; }
+.cam-help-title { font-weight: 600; }
+.cam-help-steps { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.camera-active-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #16a34a;
+}
+.camera-blocked-actions { margin-top: 10px; }
+
 .form-actions {
   display: flex; gap: 10px; flex-wrap: wrap;
   margin-top: 20px; padding-top: 18px;

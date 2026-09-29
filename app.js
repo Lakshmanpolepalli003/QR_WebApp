@@ -169,6 +169,13 @@ const state = {
   uploadUrl: null,
   cameraStream: null,
   cameraTimer: null,
+  cameraStarting: false,     // gUM in-flight guard (prevents double streams)
+  camGeneration: 0,          // bumped by every stop; invalidates in-flight starts
+  camFacing: 'environment',  // preferred facing for the next start
+  cameras: [],               // enumerated videoinput devices (post-grant)
+  camPermState: null,        // last known Permissions API state ('granted' | 'prompt' | 'denied')
+  _camDebug: null,
+  _camFacingNoteShown: false,
   clearArmedTimer: null,
   libsLocal: false,
   scanMode: 'qr',
@@ -1447,10 +1454,239 @@ function initUpload() {
 }
 
 /* ============================================================
-   13. Camera scanner
+   13. Camera scanner — permissions, lifecycle, UI states
+
+   Camera permission flow (only ever triggered by an explicit user
+   gesture on "Start Camera" / "Try Again" / "Switch Camera"):
+
+     1. mediaDevices / getUserMedia feature detection → unsupported state
+     2. window.isSecureContext check → HTTPS-required state
+     3. navigator.permissions.query({ name: 'camera' }) where supported
+        (feature-detected — several mobile browsers don't implement it)
+     4. getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
+        with a constraint cascade for devices that reject the first try
+     5. Typed DOMException mapping → separate, non-scary UI states
+
+   The previous implementation mapped *any* NotAllowedError to "Camera
+   access was denied … browser settings", which also fired when Chrome's
+   transient user-activation check rejected the request (e.g. the page
+   was reloaded/cached by the service worker and the tap no longer
+   counted as a fresh gesture) — the permission was NOT actually
+   persisted, so Android Settings correctly showed nothing. The states
+   are now kept apart: only a browser-confirmed denied/block state shows
+   the "blocked" help; a dismissed prompt or a stale-gesture retry just
+   asks the user to tap Start Camera again.
    ============================================================ */
+
+// Dev-only diagnostics. Silent unless ?debugcam=1 (or #debugcam) is set,
+// and silent when "production" appears in the host (e.g. deployed builds).
+function camDebug() {
+  try {
+    if (!state._camDebug) {
+      const flagged = /(?:^|[?&#])debugcam(?:=1|=true)?(?:$|[&])/.test(location.search + '#' + location.hash);
+      state._camDebug = flagged && !/production/i.test(location.hostname);
+    }
+    if (state._camDebug) console.log.apply(console, arguments);
+  } catch (e) { /* never break scanning over logging */ }
+}
+
+const CAMERA_COPY = {
+  unsupported: 'This browser doesn\u2019t support camera scanning. Please use a current version of Chrome, Edge, Firefox or Safari (on iPhone, Safari or Chrome).',
+  insecure: 'Camera scanning requires a secure connection (HTTPS). Please open QR Studio using HTTPS.',
+  denied: 'Camera permission is blocked. Allow camera access in your browser\u2019s site permissions, then try again.',
+  dismissed: 'The camera prompt was dismissed. Tap \u201CStart Camera\u201D again and choose \u201CAllow\u201D to scan.',
+  inUse: 'Your camera is already in use by another app or tab. Close it and try again.',
+  unavailable: 'No usable camera was found on this device.',
+  overconstrained: 'This device\u2019s camera doesn\u2019t support the requested settings. Trying simpler settings…',
+  security: 'Camera access is blocked by your browser\u2019s security policy or an embedded-frame setting.',
+  aborted: 'Camera startup was interrupted. Please try again.',
+  generic: 'Could not start the camera. Please try again.'
+};
+
+// Browser-specific help, shown ONLY when permission is confirmed denied.
+// Never claims the site appears under the phone OS Settings — websites
+// don't, except when installed as a PWA on some Android devices.
+function cameraBlockedHelpHtml() {
+  const ua = navigator.userAgent || '';
+  const iOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const firefox = /Firefox|FxiOS/i.test(ua);
+  let lines;
+  if (iOS) {
+    lines = firefox
+      ? ['Tap the permission icon near the address bar.', 'Open Site settings and allow Camera.', 'Reload the page.']
+      : ['Open the aA menu (or lock icon) in the address bar.', 'Tap Website Settings and set Camera to Allow.', 'Reload the page.'];
+  } else if (firefox) {
+    lines = ['Tap the shield/lock icon near the address bar.', 'Open site permissions and clear the Camera block.', 'Reload the page.'];
+  } else {
+    // Android Chrome / Edge / Samsung Internet and desktop Chromium browsers.
+    lines = [
+      'Tap the lock or site settings icon near the address bar.',
+      'Tap Permissions (in Edge: Camera under Site permissions).',
+      'Allow Camera, then reload the page.'
+    ];
+  }
+  const ol = el('ol', 'cam-help-steps');
+  lines.forEach((l) => ol.appendChild(el('li', null, l)));
+  const wrap = el('div', 'cam-help');
+  wrap.appendChild(el('p', 'cam-help-title', 'How to allow the camera:'));
+  wrap.appendChild(ol);
+  return wrap;
+}
+
+function queryCameraPermission() {
+  // Feature-detected: returns 'granted' | 'prompt' | 'denied' | null (unsupported).
+  try {
+    if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+      return navigator.permissions.query({ name: 'camera' })
+        .then((st) => { camDebug('[cam] permissions.query →', st && st.state); return st ? st.state : null; })
+        .catch(() => null);
+    }
+  } catch (e) { /* some engines throw on the 'camera' name */ }
+  return Promise.resolve(null);
+}
+
+function isCamSupported() {
+  return !!(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function');
+}
+
+function isCamSecure() {
+  return !!window.isSecureContext;
+}
+
+// Pre-flight checks shown BEFORE the permission prompt. Returns a message
+// string when camera cannot start, or null when we may proceed.
+function cameraPreflight() {
+  if (!isCamSupported()) return CAMERA_COPY.unsupported;
+  if (!isCamSecure()) return CAMERA_COPY.insecure;
+  return null;
+}
+
+// Run getUserMedia with a forgiving constraint cascade. facingMode uses
+// { ideal } so it never hard-fails on desktops or single-camera devices.
+// The constraint ladder lives in tryCamera — see below.
+function gmdConstraints(stage) {
+  if (stage === 0) {
+    return {
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      },
+      audio: false
+    };
+  }
+  if (stage === 1) {
+    return { video: { facingMode: { ideal: 'environment' } }, audio: false };
+  }
+  // stage 2 — plain camera request, works everywhere.
+  return { video: true, audio: false };
+}
+
+async function requestCameraStream(preferred) {
+  // preferred: 'environment' | 'user' | null (any). Returns a MediaStream.
+  const stages = [
+    gmdConstraints(0),
+    gmdConstraints(1),
+    gmdConstraints(2)
+  ];
+  let lastErr = null;
+  for (let i = 0; i < stages.length; i++) {
+    let c = stages[i];
+    if (preferred === 'user' && c.video && c.video.facingMode) {
+      c = Object.assign({}, c, { video: Object.assign({}, c.video, { facingMode: { ideal: 'user' } }) });
+    }
+    if (preferred === null && c.video && c.video.facingMode) {
+      c = Object.assign({}, c, { video: Object.assign({}, c.video, { facingMode: undefined }) });
+    }
+    try {
+      camDebug('[cam] gUM try', i, c);
+      const stream = await navigator.mediaDevices.getUserMedia(c);
+      camDebug('[cam] gUM ok on stage', i);
+      return stream;
+    } catch (err) {
+      lastErr = err;
+      camDebug('[cam] gUM stage', i, 'failed:', err && err.name, err && err.message);
+      // Only constraint problems are worth retrying with simpler constraints.
+      // Permission/security failures must surface immediately.
+      const name = err && err.name;
+      const retryable = name === 'OverconstrainedError' ||
+        name === 'NotFoundError' ||          // some Android builds report 'no camera' for unknown constraints
+        name === 'NotReadableError' ||       // transient: another tab is still releasing the camera
+        name === 'AbortError';               // device was busy switching cameras
+      if (!retryable || i === stages.length - 1) throw err;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+  throw lastErr || new DOMException('Camera unavailable', 'NotFoundError');
+}
+
+async function listCameras() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    return devs.filter((d) => d.kind === 'videoinput');
+  } catch (e) {
+    return [];
+  }
+}
+
+function describeCameraError(err) {
+  // Returns { key, message } — key selects the UI state.
+  const name = err && err.name;
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      // Distinguish a genuinely persisted block from a dismissed prompt is
+      // not possible from the DOMException alone; the caller consults the
+      // Permissions API (where available) before showing 'denied'.
+      return { key: 'denied-ish', message: CAMERA_COPY.dismissed };
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return { key: 'unavailable', message: CAMERA_COPY.unavailable };
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return { key: 'inUse', message: CAMERA_COPY.inUse };
+    case 'OverconstrainedError':
+    case 'ConstraintNotSatisfiedError':
+      return { key: 'overconstrained', message: CAMERA_COPY.overconstrained };
+    case 'SecurityError':
+      return { key: 'security', message: CAMERA_COPY.security };
+    case 'AbortError':
+      return { key: 'aborted', message: CAMERA_COPY.aborted };
+    default:
+      return { key: 'generic', message: CAMERA_COPY.generic };
+  }
+}
+
+/* ---------- scanner UI states ---------- */
+
+// Neutral, non-scary help panel for a confirmed block.
+function showCameraBlocked() {
+  showCameraError(CAMERA_COPY.denied);
+  const box = $('#cameraError');
+  box.classList.add('has-help');
+  const help = cameraBlockedHelpHtml();
+  help.id = 'cameraBlockedHelp';
+  box.appendChild(help);
+  const actions = $('#cameraBlockedActions');
+  if (actions) actions.hidden = false;
+  const start = $('#startCamBtn');
+  if (start) start.textContent = 'Try Again';
+}
+
+function resetCameraUi() {
+  showCameraError('');
+  const actions = $('#cameraBlockedActions');
+  if (actions) actions.hidden = true;
+  const start = $('#startCamBtn');
+  if (start) start.textContent = 'Start Camera';
+}
+
 function showCameraError(msg) {
   const e = $('#cameraError');
+  e.classList.remove('has-help');
+  const help = $('#cameraBlockedHelp');
+  if (help) help.remove();
   e.textContent = msg;
   e.hidden = !msg;
 }
@@ -1461,106 +1697,224 @@ function setCameraUi(active) {
   $('#scanFrame').hidden = !active;
   $('#startCamBtn').disabled = active;
   $('#stopCamBtn').disabled = !active;
-  const status = $('#scanStatus');
-  if (status) {
-    status.hidden = !active;
-    status.classList.remove('found');
+  const status = $('#cameraActiveNote');
+  if (status) status.hidden = !active;
+  const statusEl = $('#scanStatus');
+  if (statusEl) {
+    statusEl.hidden = !active;
+    statusEl.classList.remove('found');
     if (active) {
-      status.classList.add('scanning');
-      $('.scan-status-text', status).textContent =
+      statusEl.classList.add('scanning');
+      $('.scan-status-text', statusEl).textContent =
         'Scanning for ' + (state.scanMode === 'barcode' ? 'barcodes…' : 'QR codes…');
     } else {
-      status.classList.remove('scanning');
+      statusEl.classList.remove('scanning');
     }
   }
 }
 
-async function startCamera() {
-  showCameraError('');
-  if (!(await ensureEngine())) {
-    showCameraError('QR engine failed to load. Check your connection and reload the page.');
-    return;
-  }
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showCameraError('Camera scanning is not supported in this browser.');
-    return;
-  }
-  if (!window.isSecureContext) {
-    showCameraError('Camera access requires a secure connection. Open QR Studio over HTTPS or localhost.');
-    return;
-  }
-  if (state.scanMode === 'barcode' && !state.zxingLoaded) {
-    showCameraError('Barcode engine failed to load. Check your connection and reload the page.');
-    return;
-  }
-  setCameraUi(true);
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false
-    });
-    state.cameraStream = stream;
-    const video = $('#cameraVideo');
-    video.srcObject = stream;
-    try { await video.play(); } catch (e) { /* autoplay is muted; ignore */ }
-
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-    state.cameraTimer = setInterval(() => {
-      if (!state.cameraStream || video.readyState < 2) return;
-      const vw = video.videoWidth, vh = video.videoHeight;
-      if (!vw || !vh) return;
-      const scale = Math.min(1, 640 / vw);
-      const w = Math.round(vw * scale), h = Math.round(vh * scale);
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-      ctx.drawImage(video, 0, 0, w, h);
-      const frame = ctx.getImageData(0, 0, w, h);
-      if (state.scanMode === 'barcode') {
-        const hit = zxingDecodeImageData(frame.data, w, h);
-        if (hit && hit.text) {
-          stopCamera();
-          if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) { /* ignore */ } }
-          handleScanSuccess(hit);
-        }
-        return;
-      }
-      const code = window.jsQR(frame.data, w, h, { inversionAttempts: 'dontInvert' });
-      if (code && code.data) {
-        stopCamera();
-        if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) { /* ignore */ } }
-        handleScanSuccess(code.data);
-      }
-    }, 180);
-  } catch (err) {
-    setCameraUi(false);
-    const name = err && err.name;
-    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-      showCameraError('Camera access was denied. Allow camera permission in your browser settings and try again.');
-    } else if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') {
-      showCameraError('No camera was found on this device.');
-    } else if (name === 'NotReadableError' || name === 'TrackStartError') {
-      showCameraError('Your camera is already in use by another app. Close it and try again.');
-    } else {
-      showCameraError('Could not start the camera. Please try again.');
-    }
-  }
-}
-
-function stopCamera() {
+// Stop any previous stream/tracker BEFORE opening a new one — prevents
+// duplicate active streams and camera-in-use errors when restarting fast.
+function releaseCameraStream() {
   if (state.cameraTimer) { clearInterval(state.cameraTimer); state.cameraTimer = null; }
   if (state.cameraStream) {
-    state.cameraStream.getTracks().forEach((t) => t.stop());
+    try {
+      state.cameraStream.getTracks().forEach((t) => t.stop());
+      camDebug('[cam] previous stream released');
+    } catch (e) { /* already stopped */ }
     state.cameraStream = null;
   }
   const video = $('#cameraVideo');
   if (video) video.srcObject = null;
+}
+
+function stopCamera(opts) {
+  state.camGeneration++;            // invalidate any in-flight getUserMedia start
+  releaseCameraStream();
   setCameraUi(false);
+  resetCameraUi();
+  camDebug('[cam] scanner cleanup');
+  void opts;
+}
+
+async function startCamera(preferredFacing) {
+  if (state.cameraStarting) return; // guard against double-taps creating two streams
+  state.cameraStarting = true;
+  // Generation token: any stopCamera() while getUserMedia is pending
+  // invalidates this start, so its stream is discarded instead of leaking
+  // (a leaked stream keeps the camera locked → "camera in use" later).
+  const gen = ++state.camGeneration;
+  const invalidated = () => gen !== state.camGeneration;
+  const startBtn = $('#startCamBtn');
+  try {
+    resetCameraUi();
+
+    // --- 1. Pre-flight: support & secure context (never touch the camera) ---
+    const preflight = cameraPreflight();
+    if (preflight) {
+      showCameraError(preflight);
+      return;
+    }
+
+    // --- 2. Barcode engine readiness (barcode mode only) ---
+    if (state.scanMode === 'barcode') {
+      const ok = await state.zxingReady;
+      if (!state.zxingLoaded) {
+        showCameraError('Barcode engine failed to load. Check your connection and reload the page.');
+        return;
+      }
+      void ok;
+    }
+
+    // QR mode: the QR engine is bundled locally; no need to block on it here.
+
+    // --- 3. Permission state (informational; getUserMedia is the source of truth) ---
+    const permState = await queryCameraPermission();
+    state.camPermState = permState;
+    if (invalidated()) return;
+
+    setCameraUi(true); // spinner/idle note while the prompt may be showing
+
+    // --- 4. Acquire the stream (must be inside the click-gesture task) ---
+    const stream = await requestCameraStream(preferredFacing === 'user' ? 'user' : 'environment');
+    if (invalidated()) {
+      // Stop was pressed (or the view changed) while the prompt was open.
+      stream.getTracks().forEach((t) => t.stop());
+      camDebug('[cam] start invalidated → stream discarded');
+      return;
+    }
+
+    releaseCameraStream();       // safety: never two live streams
+    state.cameraStream = stream;
+    stream.getVideoTracks().forEach((t) => {
+      t.addEventListener('ended', () => {
+        // User revoked camera from the browser UI mid-scan (Chrome fires this).
+        if (state.cameraStream === stream) stopCamera();
+      });
+    });
+
+    const video = $('#cameraVideo');
+    video.srcObject = stream;
+    // Do NOT await play(): on some devices it stays pending indefinitely
+    // (paused stream, iOS low-power mode, fake/headless devices) and would
+    // block startup. The scan loop below polls video.readyState instead.
+    try { video.play().catch(() => { /* muted autoplay */ }); } catch (e) { /* ignore */ }
+
+    if (state.camFacing === 'user' && !state._camFacingNoteShown) {
+      toast('Using front camera', 'info');
+    }
+
+    // Device enumeration is only meaningful after permission was granted.
+    const cams = await listCameras();
+    state.cameras = cams;
+    camDebug('[cam] devices:', cams.map((d) => d.label || d.deviceId).join(' | ') || '(labels hidden until granted)');
+    const switchBtn = $('#switchCamBtn');
+    if (switchBtn) switchBtn.hidden = cams.length < 2;
+
+    startBtn.textContent = 'Stop Camera';
+    startBtn.disabled = true;
+    $('#stopCamBtn').disabled = false;
+
+    camDebug('[cam] scanner initialized (' + state.scanMode + ' mode)');
+    beginScanLoop(video);
+  } catch (err) {
+    releaseCameraStream();
+    if (!invalidated()) {
+      setCameraUi(false);
+      await handleCameraStartError(err);
+    }
+  } finally {
+    // Always clear the in-flight guard — even when a stop invalidated this
+    // start — otherwise the next "Start Camera" tap would be swallowed.
+    state.cameraStarting = false;
+  }
+}
+
+// Decide between a real "denied" block and a dismissed/stale-gesture prompt.
+async function handleCameraStartError(err) {
+  const desc = describeCameraError(err);
+  camDebug('[cam] getUserMedia failed:', err && err.name, err && err.message);
+  if (desc.key !== 'denied-ish') {
+    showCameraError(desc.message);
+    return;
+  }
+  // NotAllowedError — ask the browser (where supported) who is to blame.
+  const state2 = await queryCameraPermission();
+  state.camPermState = state2;
+  if (state2 === 'denied') {
+    showCameraBlocked();       // confirmed block → instructions + Try Again
+  } else if (state2 === 'granted') {
+    // Odd but seen in the wild: permission says granted yet gUM refused —
+    // often a stale user-activation after a service-worker page restore.
+    // A fresh tap fixes it; do NOT claim the user denied anything.
+    showCameraError(CAMERA_COPY.dismissed);
+  } else {
+    // 'prompt' (or Permissions API unsupported): most likely the prompt was
+    // dismissed, or the gesture had gone stale. Never say "denied".
+    showCameraError(CAMERA_COPY.dismissed);
+  }
+}
+
+function beginScanLoop(video) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  state.cameraTimer = setInterval(() => {
+    if (!state.cameraStream || video.readyState < 2) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    const scale = Math.min(1, 640 / vw);
+    const w = Math.round(vw * scale), h = Math.round(vh * scale);
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    ctx.drawImage(video, 0, 0, w, h);
+    const frame = ctx.getImageData(0, 0, w, h);
+    if (state.scanMode === 'barcode') {
+      const hit = zxingDecodeImageData(frame.data, w, h);
+      if (hit && hit.text) {
+        stopCamera();
+        if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) { /* ignore */ } }
+        handleScanSuccess(hit);
+      }
+      return;
+    }
+    const code = window.jsQR(frame.data, w, h, { inversionAttempts: 'dontInvert' });
+    if (code && code.data) {
+      stopCamera();
+      if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) { /* ignore */ } }
+      handleScanSuccess(code.data);
+    }
+  }, 180);
+}
+
+async function onSwitchCamera() {
+  camDebug('[cam] switch camera requested');
+  await startCamera(state.camFacing === 'user' ? 'environment' : 'user');
 }
 
 function initCamera() {
-  $('#startCamBtn').addEventListener('click', startCamera);
-  $('#stopCamBtn').addEventListener('click', stopCamera);
+  $('#startCamBtn').addEventListener('click', () => startCamera());
+  $('#stopCamBtn').addEventListener('click', () => stopCamera());
+  const switchBtn = $('#switchCamBtn');
+  if (switchBtn) switchBtn.addEventListener('click', onSwitchCamera);
+  const blockedRetry = $('#startCamBtn2');
+  if (blockedRetry) blockedRetry.addEventListener('click', () => { resetCameraUi(); startCamera(); });
+  const blockedImage = $('#imageFromBlockBtn');
+  if (blockedImage) blockedImage.addEventListener('click', () => { stopCamera(); resetCameraUi(); $('#scanFileInput').click(); });
+
+  // Lifecycle: stop tracks when leaving the page or hiding the tab.
+  // On return the camera is simply started fresh with "Start Camera"
+  // (permission is already granted, so no prompt appears).
+  window.addEventListener('pagehide', () => releaseCameraStream());
+  window.addEventListener('beforeunload', () => releaseCameraStream());
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && state.cameraStream) {
+      camDebug('[cam] tab hidden → stopping camera');
+      releaseCameraStream();
+      setCameraUi(false);
+    }
+    // NOTE: no action when becoming visible — starting a stream here would
+    // race the permission prompt and can leak the previous one.
+  });
 }
 
 /* ============================================================
@@ -2011,7 +2365,7 @@ function init() {
 
   initEngine();
 
-  window.addEventListener('pagehide', stopCamera);
+  // pagehide/beforeunload camera cleanup is registered in initCamera().
   window.addEventListener('beforeunload', () => {
     if (state.uploadUrl) URL.revokeObjectURL(state.uploadUrl);
   });

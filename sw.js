@@ -2,7 +2,7 @@
    Same-origin assets only: cross-origin requests are never touched. */
 'use strict';
 
-const CACHE = 'qr-studio-v4';
+const CACHE = 'qr-studio-v5';
 const ASSETS = [
   './',
   './index.html',

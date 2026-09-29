@@ -15,6 +15,17 @@ node tools/serve.js 8080
 
 Any static server works too (e.g. `python3 -m http.server 8080`). Opening `index.html` directly via `file://` also works for generating QR codes; the camera scanner needs `http://localhost` or HTTPS.
 
+## Camera permissions on mobile
+
+The camera only starts after you tap **Start Camera** — nothing is requested on page load. If scanning fails:
+
+- **HTTPS required.** Phones can only grant camera access on `https://` URLs (or `localhost`). Test on a phone by opening the deployed HTTPS URL, or use a quick tunnel: `npx localtunnel --port 8080`.
+- **"The prompt was dismissed…"** means the browser prompt was closed or the tap had gone stale (common after a service-worker page restore). Tap **Start Camera** again and choose **Allow**.
+- **"Camera permission is blocked"** appears only when the browser itself reports a persisted block. Fix it in the *browser's* site settings (tap the lock/site icon near the address bar → Permissions → Camera → Allow), then reload. Websites do not appear in the phone's main Settings camera list.
+- **"Camera is already in use"** usually means another tab or app holds the camera — close it, then retry.
+
+Add `?debugcam=1` to the URL to see verbose camera diagnostics in the console (secure-context status, permission state, getUserMedia attempts, device enumeration).
+
 The QR engine (`qrcode-generator`) and the decoder (`jsQR`) are bundled in `vendor/`, so the app works **fully offline** with no CDN calls. If `vendor/` is missing, the app transparently falls back to CDN copies — so a bare checkout of just the HTML/CSS/JS still works when online.
 
 ## Install (PWA)

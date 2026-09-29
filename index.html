@@ -503,9 +503,19 @@
             </p>
 
             <p class="inline-error" id="cameraError" hidden role="alert"></p>
+            <p class="camera-active-note" id="cameraActiveNote" hidden>Camera active</p>
+
+            <!-- Shown only when the browser confirms camera permission is denied/blocked -->
+            <div class="scan-actions btn-row camera-blocked-actions" id="cameraBlockedActions" hidden>
+              <button type="button" class="btn btn-primary" id="startCamBtn2">Try Again</button>
+              <button type="button" class="btn btn-ghost" id="imageFromBlockBtn">Scan from Image</button>
+            </div>
+
             <div class="scan-actions btn-row">
               <button type="button" class="btn btn-primary" id="startCamBtn">Start Camera</button>
               <button type="button" class="btn btn-ghost" id="stopCamBtn" disabled>Stop Camera</button>
+              <button type="button" class="btn btn-ghost" id="switchCamBtn" hidden>
+                <svg class="icon"><use href="#i-refresh"/></svg>Switch Camera</button>
             </div>
           </section>
         </div>
